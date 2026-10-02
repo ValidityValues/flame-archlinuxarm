@@ -155,5 +155,6 @@ case "$choice" in
     echo "Unknown choice: $choice" >&2
     exit 2
     ;;
-esacecho
+esac
+echo
 echo "Flash command completed. This does not prove that the device can boot the image."
