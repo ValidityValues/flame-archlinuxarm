@@ -125,10 +125,9 @@ jobs:
           sudo mount --make-rslave rootfs/sys
           mapfile -t PKGS < stage/packages-to-install.txt
           sudo chroot rootfs /usr/bin/pacman -Syu --noconfirm --needed "${PKGS[@]}"
+          sudo chroot rootfs /usr/bin/pacman -Q > stage/packages-installed.txt
           sudo rm -f rootfs/usr/bin/qemu-aarch64-static
           sudo mkdir -p rootfs/etc/ssh/sshd_config.d rootfs/root/.ssh rootfs/etc/NetworkManager/conf.d rootfs/etc/flame rootfs/etc/systemd/system/multi-user.target.wants
-          sudo chown "$USER":"$USER" stage/packages-installed.txt 2>/dev/null || true
-          sudo chroot rootfs /usr/bin/pacman -Q > stage/packages-installed.txt
           echo flame-arch | sudo tee rootfs/etc/hostname >/dev/null
           if [ -n "$SSH_PUBLIC_KEY" ]; then
             printf '%s\n' "$SSH_PUBLIC_KEY" | sudo tee rootfs/root/.ssh/authorized_keys >/dev/null
