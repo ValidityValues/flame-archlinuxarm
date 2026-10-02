@@ -36,7 +36,6 @@ The supplied preboot calculates the physical start and size of the Android `user
 1. **`rootfs.img`** — one ext4 filesystem containing Arch Linux ARM, the selected DE, NetworkManager, BlueZ, firmware files and packages. It is built locally with `scripts/build-rootfs.sh`; there is no hosted rootfs build workflow.
 2. **`u-boot.img`** — the Android boot-image-format U-Boot artifact produced from `andrew/google-flame`. It is a separate boot-chain image, not part of the ext4 root filesystem.
 3. **Linux boot files** — the kernel `Image`, Pixel 4 DTB, and matching modules can optionally be copied into `/boot` inside `rootfs.img`. This helps only when U-Boot/EFI can actually read that filesystem. The current blkmap recipe scans a nested layout in `userdata`, not a dynamic partition inside `super`.
-4. **Early root mount** — if the rootfs itself is inside `super`, a matching initramfs must create a `dm-linear` mapping for the target logical partition from the actual LP metadata and mount it. A plain `root=/dev/sdaN` does not identify an Android logical partition inside `super`.
 4. **Early root mount** — because the rootfs lives inside `super`, the initramfs must create a `dm-linear` mapping for the chosen logical partition using the actual LP metadata, then mount that mapped device. A plain `root=/dev/sdaN` does not identify a logical partition inside `super`.
 
 ## What is still needed before a genuinely bootable image
