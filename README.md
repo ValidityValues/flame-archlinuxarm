@@ -1,6 +1,6 @@
 # Arch Linux ARM for Google Pixel 4 (google-flame)
 
-This repository builds an AArch64 Arch Linux ARM userspace rootfs and a reference U-Boot build. Kernel builds live in the separate repository [ValidityValues/linux-sm8150-mainline](https://github.com/ValidityValues/linux-sm8150-mainline).
+This repository provides a local AArch64 Arch Linux ARM rootfs builder and a device-specific U-Boot build. Kernel builds live in the separate repository [ValidityValues/linux-sm8150-mainline](https://github.com/ValidityValues/linux-sm8150-mainline).
 
 ## Current device facts supplied for this project
 
@@ -73,9 +73,9 @@ The supplied fastboot output is not a full LP metadata dump, so no flash/resize 
 
 ## Rootfs details
 
-The generic Arch Linux ARM AArch64 tarball provides a glibc-based ARM64 userspace. It is not a device-specific kernel. The matching kernel, DTB and modules must be built together from the device-support source. An ext4 image from the workflow is a filesystem image only, not a boot image and not a flashable `super.img`.
+The generic Arch Linux ARM AArch64 tarball provides a glibc-based ARM64 userspace. It is not a device-specific kernel. The matching kernel, DTB and modules must be built together from the device-support source. `rootfs.img` is an ext4 filesystem image only, not an Android boot image and not a flashable `super.img`.
 
-If no SSH public key is supplied at build time, SSH remains disabled. Never put a private key or password into workflow inputs.
+If no SSH public key is supplied, SSH is not enabled. The builder only accepts a public key file; never pass a private key into the script.
 
 ## References
 
