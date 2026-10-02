@@ -33,6 +33,25 @@ The script prompts for sudo when required, verifies the upstream Arch Linux ARM 
 - `out/rootfs.img.sha256`: SHA-256 checksum.
 - `out/BUILD-MANIFEST.txt`: build details.
 
+## Flash the local image
+
+After building `out/rootfs.img`, run the interactive helper from the repository root:
+
+```bash
+bash flash.sh
+```
+
+It offers two destinations:
+
+- **`userdata`**: writes the ext4 image to the physical `userdata` partition. This replaces that filesystem and destroys Android user data. Continue only if you intentionally accept that loss and have a verified backup.
+- **Logical partition inside `super`**: writes to the dedicated logical partition `flame_root` using **Fastbootd**. That logical partition must already exist in valid Android LP metadata and be large enough. The script checks that Fastbootd identifies it as a logical partition and checks its capacity before writing.
+
+The second option does **not** flash the image to the physical `super` container and does not create/resize logical partitions. Partition creation and LP metadata changes require a separate, reviewed procedure and verified backups. The script asks for an explicit confirmation before either write. To select a device when multiple Fastboot devices are connected, set `FASTBOOT_SERIAL`:
+
+```bash
+FASTBOOT_SERIAL=YOUR_SERIAL bash flash.sh
+```
+
 Desktop choices: `none`, `plasma-desktop`, `xfce4`, `lxqt`, `gnome`. Example for a smaller base system:
 
 ```bash
