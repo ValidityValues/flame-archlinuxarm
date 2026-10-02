@@ -95,14 +95,16 @@ unmount_builder_mounts() {
   for target in \
     "$ROOTFS/var/cache/pacman/pkg" \
     "$ROOTFS/proc" \
-    "$ROOTFS/dev/pts" \
-    "$ROOTFS/dev" \
     "$MNT"; do
     if mountpoint -q "$target"; then
       echo "Unmounting $target..."
       umount "$target" || failed=1
     fi
   done
+  if mountpoint -q "$ROOTFS/dev"; then
+    echo "Unmounting chroot /dev tree..."
+    umount -R "$ROOTFS/dev" || failed=1
+  fi
   if (( failed )); then
     echo "ERROR: some previous chroot/image mounts are still busy; refusing to start." >&2
     echo "Inspect mounts with: findmnt -R '$ROOTFS'" >&2
@@ -112,9 +114,45 @@ unmount_builder_mounts() {
   fi
 }
 
+process_is_inside_rootfs() {
+  local proc_dir="$1" proc_root proc_cwd
+  proc_root="$(readlink "$proc_dir/root" 2>/dev/null || true)"
+  proc_cwd="$(readlink "$proc_dir/cwd" 2>/dev/null || true)"
+  [[ "$proc_root" == "$ROOTFS" || "$proc_root" == "$ROOTFS (deleted)" ||
+     "$proc_cwd" == "$ROOTFS" || "$proc_cwd" == "$ROOTFS/"* ]]
+}
+
+terminate_stale_chroot_processes() {
+  local proc_dir pid cmd
+  local -a pids=()
+  for proc_dir in /proc/[0-9]*; do
+    [[ -d "$proc_dir" ]] || continue
+    if process_is_inside_rootfs "$proc_dir"; then
+      pid="${proc_dir##*/}"
+      [[ "$pid" == "$" ]] && continue
+      cmd="$(tr '\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)"
+      echo "Stopping leftover chroot process $pid: ${cmd:-unknown command}" >&2
+      pids+=("$pid")
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  if (("${#pids[@]}" > 0)); then
+    sleep 1
+    for pid in "${pids[@]}"; do
+      if [[ -d "/proc/$pid" ]] && process_is_inside_rootfs "/proc/$pid"; then
+        echo "Force-stopping stale chroot process $pid" >&2
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+    done
+  fi
+}
+
 cleanup() {
   set +e
-  unmount_builder_mounts
+  if ! unmount_builder_mounts; then
+    terminate_stale_chroot_processes
+    unmount_builder_mounts
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -122,7 +160,15 @@ mkdir -p "$OUT_DIR" "$WORK" "$ROOTFS" "$MNT" "$DOWNLOAD" "$GPG_HOME" "$PKG_CACHE
 chmod 700 "$GPG_HOME"
 
 echo "[preflight] Unmount stale chroot mounts and reset the working rootfs"
-unmount_builder_mounts
+if ! unmount_builder_mounts; then
+  echo "Looking for leftover processes rooted in this build chroot..." >&2
+  terminate_stale_chroot_processes
+  unmount_builder_mounts || {
+    echo "Could not safely unmount the old chroot. No files were deleted." >&2
+    echo "Inspect with: findmnt -R '$ROOTFS' ; sudo fuser -vm '$ROOTFS/dev'" >&2
+    exit 1
+  }
+fi
 
 # Migrate the archive downloaded by the previous version of this script so
 # the first run with the new persistent cache does not download ~800 MiB again.
@@ -176,12 +222,30 @@ rm -f "$ROOTFS/etc/resolv.conf"
 cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 printf 'flame-arch\n' > "$ROOTFS/etc/hostname"
 printf 'LANG=en_US.UTF-8\n' > "$ROOTFS/etc/locale.conf"
+
+# Prefer fixed official Arch Linux ARM mirrors and keep the GeoIP mirror as
+# the final fallback. Package signatures are still verified by pacman.
+cat > "$ROOTFS/etc/pacman.d/mirrorlist" <<'EOF'
+Server = http://de3.mirror.archlinuxarm.org/$arch/$repo
+Server = http://de.mirror.archlinuxarm.org/$arch/$repo
+Server = http://ca.us.mirror.archlinuxarm.org/$arch/$repo
+Server = http://fl.us.mirror.archlinuxarm.org/$arch/$repo
+Server = http://nj.us.mirror.archlinuxarm.org/$arch/$repo
+Server = http://mirror.archlinuxarm.org/$arch/$repo
+EOF
+
+# Avoid bursts of simultaneous downloads on this potentially flaky connection.
+if grep -Eq '^[[:space:]]*#?[[:space:]]*ParallelDownloads[[:space:]]*=' "$ROOTFS/etc/pacman.conf"; then
+  sed -i -E 's/^[[:space:]]*#?[[:space:]]*ParallelDownloads[[:space:]]*=.*/ParallelDownloads = 1/' "$ROOTFS/etc/pacman.conf"
+else
+  sed -i '/^\[options\]/a ParallelDownloads = 1' "$ROOTFS/etc/pacman.conf"
+fi
 sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' "$ROOTFS/etc/locale.gen" 2>/dev/null || true
 
 DE_PACKAGES=""
 DISPLAY_MANAGER=""
 case "$DESKTOP" in
-  plasma-desktop) DE_PACKAGES="plasma-desktop plasma-nm bluedevil dolphin konsole kate sddm xorg-server xorg-xwayland mesa vulkan-freedreno pipewire pipewire-alsa pipewire-pulse wireplumber xdg-desktop-portal xdg-desktop-portal-kde qt6-wayland"; DISPLAY_MANAGER=sddm ;;
+  plasma-desktop) DE_PACKAGES="plasma-desktop plasma-nm bluedevil dolphin konsole kate sddm xorg-server xorg-xwayland mesa vulkan-freedreno pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber xdg-desktop-portal xdg-desktop-portal-kde qt6-wayland qt6-multimedia-ffmpeg"; DISPLAY_MANAGER=sddm ;;
   xfce4) DE_PACKAGES="xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 xfce4-terminal thunar mousepad ristretto lightdm lightdm-gtk-greeter xorg-server xorg-xwayland mesa vulkan-freedreno"; DISPLAY_MANAGER=lightdm ;;
   lxqt) DE_PACKAGES="lxqt-session lxqt-panel lxqt-config lxqt-runner pcmanfm-qt qterminal sddm xorg-server xorg-xwayland mesa vulkan-freedreno qt6-wayland"; DISPLAY_MANAGER=sddm ;;
   gnome) DE_PACKAGES="gnome-shell gnome-session gdm gnome-terminal nautilus gnome-control-center gnome-settings-daemon gnome-keyring gnome-backgrounds gnome-tweaks xorg-xwayland mesa vulkan-freedreno"; DISPLAY_MANAGER=gdm ;;
@@ -200,7 +264,7 @@ chroot "$ROOTFS" /usr/bin/pacman-key --init
 chroot "$ROOTFS" /usr/bin/pacman-key --populate archlinuxarm
 # The host kernel/container may not expose Landlock to this chroot. Disable
 # only pacman's downloader sandbox for this build invocation; signature checks remain enabled.
-xargs chroot "$ROOTFS" /usr/bin/pacman -Syu --disable-sandbox --noconfirm --needed < "$WORK/packages.txt"
+xargs chroot "$ROOTFS" /usr/bin/pacman -Syu --disable-sandbox --disable-download-timeout --noconfirm --needed < "$WORK/packages.txt"
 chroot "$ROOTFS" /usr/bin/pacman -Q > "$WORK/packages-installed.txt"
 
 if ! chroot "$ROOTFS" /usr/bin/id "$TARGET_USER" >/dev/null 2>&1; then
