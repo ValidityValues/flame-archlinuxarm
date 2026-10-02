@@ -143,7 +143,7 @@ terminate_stale_chroot_processes() {
     [[ -d "$proc_dir" ]] || continue
     if process_is_inside_rootfs "$proc_dir"; then
       pid="${proc_dir##*/}"
-      [[ "$pid" == "$" ]] && continue
+      [[ "$pid" == "$$" ]] && continue
       cmd="$(tr '\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)"
       echo "Stopping leftover chroot process $pid: ${cmd:-unknown command}" >&2
       pids+=("$pid")
