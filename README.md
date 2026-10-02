@@ -10,12 +10,21 @@ This repository builds an AArch64 Arch Linux ARM userspace rootfs and a referenc
 - `userdata` is to remain untouched.
 - Fastboot bootloader reports sizes for `system_b`, `vendor_b`, `product_b`, `system_ext_b`; some A-side queries return `variable not found`. This is not enough information to safely resize `super`.
 
-## Workflows
+## Workflows and artifacts
 
-- **Build Arch Linux ARM rootfs:** verifies and extracts the generic AArch64 rootfs, produces a compressed rootfs archive and standalone ext4 image, then uploads checksums and a manifest.
-- **Build SM8150 U-Boot reference:** builds the configured upstream/project reference and archives outputs. Build output is not a validated Pixel 4 boot image.
+Open **Actions → Run workflow** in this repository:
 
-Run them under **Actions → workflow → Run workflow**. Neither workflow flashes the phone.
+- **Build Arch Linux ARM rootfs**: choose `none`, `plasma-desktop`, `xfce4`, `lxqt`, or `gnome`; choose a 4096/6144/8192 MiB ext4 artifact size. Default is Plasma Desktop and 6144 MiB.
+- **Build SM8150 U-Boot (reference)**: builds the selected ref from `sm8150-mainline/u-boot` and exports the U-Boot binary variants, configuration, host image tools if built, `pixel4.txt` if present, source revision, and SHA-256 manifest.
+
+The rootfs artifact contains:
+- `flame-rootfs.tar.zst`: complete ARM64 root filesystem archive.
+- `flame-rootfs.ext4` and `flame-rootfs.ext4.zst`: standalone ext4 filesystem and compressed copy.
+- `packages-installed.txt`, `packages-to-install.txt`, `firmware-audit.txt`, `desktop-environment.txt`, `display-manager.txt`, `MANIFEST.txt`, and `SHA256SUMS`.
+
+The userspace enables NetworkManager and BlueZ at boot and installs `wpa_supplicant`, `iwd`, `wireless-regdb`, `bluez-utils`, `linux-firmware-qcom`, `linux-firmware-atheros`, and `linux-firmware-whence`. This supplies userspace services and redistributable Qualcomm/Atheros firmware files. **It does not by itself prove Wi-Fi/Bluetooth works on this phone**: the selected kernel must include the relevant drivers, the Pixel 4 DTS must correctly enable/configure WCN399x, and any device-specific calibration/firmware requirements must be met.
+
+The matching kernel, Pixel 4 DTB, and modules are built in [the separate kernel repository](https://github.com/ValidityValues/linux-sm8150-mainline). The U-Boot artifact is built separately here. Each artifact has its own manifest and checksums. CI builds do not flash the device.
 
 ## Important: rootfs in super, not userdata
 
