@@ -69,36 +69,89 @@ mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd -- "$OUT_DIR" && pwd)"
 WORK="$OUT_DIR/.build-rootfs"
 ROOTFS="$WORK/rootfs"
-DOWNLOAD="$WORK/download"
 MNT="$WORK/mnt"
+CACHE_DIR="$OUT_DIR/cache"
+DOWNLOAD="$CACHE_DIR/archlinuxarm"
+PKG_CACHE="$OUT_DIR/pacman-cache"
 TMP_IMAGE="$OUT_DIR/.rootfs.img.tmp"
 FINAL_IMAGE="$OUT_DIR/rootfs.img"
-GPG_HOME="$WORK/gnupg"
+GPG_HOME="$CACHE_DIR/gnupg"
+KEY_FILE="$CACHE_DIR/archlinuxarm-signing-key.asc"
 URL="https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
 FILE="ArchLinuxARM-aarch64-latest.tar.gz"
 BASE_URL="$(dirname "$URL")"
+KEY_FPR="68B3537F39A313B3E574D06777193F152BDBE6A6"
+KEY_URL="https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$KEY_FPR"
+
+# Unmount only this builder's known mountpoints before touching its chroot.
+# If something is still using them, fail instead of deleting a mounted tree.
+unmount_builder_mounts() {
+  local failed=0 target
+  if mountpoint -q "$ROOTFS/sys"; then
+    echo "Unmounting previous chroot /sys tree..."
+    umount -R "$ROOTFS/sys" || failed=1
+  fi
+  for target in \
+    "$ROOTFS/var/cache/pacman/pkg" \
+    "$ROOTFS/proc" \
+    "$ROOTFS/dev/pts" \
+    "$ROOTFS/dev" \
+    "$MNT"; do
+    if mountpoint -q "$target"; then
+      echo "Unmounting $target..."
+      umount "$target" || failed=1
+    fi
+  done
+  if (( failed )); then
+    echo "ERROR: some previous chroot/image mounts are still busy; refusing to start." >&2
+    echo "Inspect mounts with: findmnt -R '$ROOTFS'" >&2
+    echo "Check open processes with: sudo fuser -vm '$ROOTFS'" >&2
+    findmnt -R "$ROOTFS" >&2 || true
+    return 1
+  fi
+}
 
 cleanup() {
   set +e
-  mountpoint -q "$MNT" && umount "$MNT"
-  mountpoint -q "$ROOTFS/sys" && umount -R "$ROOTFS/sys"
-  mountpoint -q "$ROOTFS/proc" && umount "$ROOTFS/proc"
-  mountpoint -q "$ROOTFS/dev/pts" && umount "$ROOTFS/dev/pts"
-  mountpoint -q "$ROOTFS/dev" && umount "$ROOTFS/dev"
+  unmount_builder_mounts
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$ROOTFS" "$DOWNLOAD" "$MNT" "$GPG_HOME"
+mkdir -p "$OUT_DIR" "$WORK" "$ROOTFS" "$MNT" "$DOWNLOAD" "$GPG_HOME" "$PKG_CACHE"
 chmod 700 "$GPG_HOME"
 
+echo "[preflight] Unmount stale chroot mounts and reset the working rootfs"
+unmount_builder_mounts
+rm -rf "$ROOTFS" "$MNT" "$TMP_IMAGE"
+mkdir -p "$ROOTFS" "$MNT" "$WORK"
+
+download_cached() {
+  local url="$1" destination="$2"
+  if [[ -s "$destination" ]]; then
+    echo "Cache hit: $(basename "$destination")"
+    return 0
+  fi
+  echo "Downloading: $(basename "$destination")"
+  curl -fL --retry 5 "$url" -o "$destination.part"
+  mv -f "$destination.part" "$destination"
+}
+
 echo "[1/6] Download and verify Arch Linux ARM rootfs"
-curl -fL --retry 5 "$URL" -o "$DOWNLOAD/$FILE"
-curl -fL --retry 5 "$BASE_URL/$FILE.md5" -o "$DOWNLOAD/$FILE.md5"
-curl -fL --retry 5 "$BASE_URL/$FILE.sig" -o "$DOWNLOAD/$FILE.sig"
-(cd "$DOWNLOAD" && md5sum -c "$FILE.md5")
-curl -fL --retry 5 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x68B3537F39A313B3E574D06777193F152BDBE6A6' | gpg --homedir "$GPG_HOME" --batch --import
-FPR="$(gpg --homedir "$GPG_HOME" --batch --with-colons --fingerprint 68B3537F39A313B3E574D06777193F152BDBE6A6 | awk -F: '$1=="fpr" {print $10; exit}')"
-[[ "$FPR" == 68B3537F39A313B3E574D06777193F152BDBE6A6 ]] || { echo "Unexpected signing key fingerprint: $FPR" >&2; exit 1; }
+download_cached "$URL" "$DOWNLOAD/$FILE"
+download_cached "$BASE_URL/$FILE.md5" "$DOWNLOAD/$FILE.md5"
+download_cached "$BASE_URL/$FILE.sig" "$DOWNLOAD/$FILE.sig"
+if ! (cd "$DOWNLOAD" && md5sum -c "$FILE.md5"); then
+  echo "Cached Arch Linux ARM archive failed its MD5 check; downloading it again." >&2
+  rm -f "$DOWNLOAD/$FILE" "$DOWNLOAD/$FILE.part"
+  download_cached "$URL" "$DOWNLOAD/$FILE"
+  (cd "$DOWNLOAD" && md5sum -c "$FILE.md5")
+fi
+if ! gpg --homedir "$GPG_HOME" --batch --list-keys "$KEY_FPR" >/dev/null 2>&1; then
+  download_cached "$KEY_URL" "$KEY_FILE"
+  gpg --homedir "$GPG_HOME" --batch --import "$KEY_FILE"
+fi
+FPR="$(gpg --homedir "$GPG_HOME" --batch --with-colons --fingerprint "$KEY_FPR" | awk -F: '$1=="fpr" {print $10; exit}')"
+[[ "$FPR" == "$KEY_FPR" ]] || { echo "Unexpected signing key fingerprint: $FPR" >&2; exit 1; }
 gpg --homedir "$GPG_HOME" --batch --verify "$DOWNLOAD/$FILE.sig" "$DOWNLOAD/$FILE"
 
 echo "[2/6] Extract ARM64 base system"
@@ -123,6 +176,8 @@ esac
 printf '%s\n' base sudo openssh git vim nano tmux usbutils e2fsprogs dosfstools device-mapper mkinitcpio networkmanager wpa_supplicant iwd wireless-regdb rfkill iw bluez bluez-utils linux-firmware-qcom linux-firmware-atheros linux-firmware-whence $DE_PACKAGES   | sed '/^$/d' | sort -u > "$WORK/packages.txt"
 
 echo "[3/6] Set up ARM64 chroot and install packages"
+mkdir -p "$ROOTFS/var/cache/pacman/pkg" "$PKG_CACHE"
+mount --bind "$PKG_CACHE" "$ROOTFS/var/cache/pacman/pkg"
 mount --bind /dev "$ROOTFS/dev"
 mount --bind /dev/pts "$ROOTFS/dev/pts"
 mount -t proc proc "$ROOTFS/proc"
@@ -130,7 +185,9 @@ mount --rbind /sys "$ROOTFS/sys"
 mount --make-rslave "$ROOTFS/sys"
 chroot "$ROOTFS" /usr/bin/pacman-key --init
 chroot "$ROOTFS" /usr/bin/pacman-key --populate archlinuxarm
-xargs chroot "$ROOTFS" /usr/bin/pacman -Syu --noconfirm --needed < "$WORK/packages.txt"
+# The host kernel/container may not expose Landlock to this chroot. Disable
+# only pacman's downloader sandbox for this build invocation; signature checks remain enabled.
+xargs chroot "$ROOTFS" /usr/bin/pacman -Syu --disable-sandbox --noconfirm --needed < "$WORK/packages.txt"
 chroot "$ROOTFS" /usr/bin/pacman -Q > "$WORK/packages-installed.txt"
 
 if ! chroot "$ROOTFS" /usr/bin/id "$TARGET_USER" >/dev/null 2>&1; then
@@ -195,10 +252,7 @@ EOF
 
 # Leave the chroot mounts before copying the tree into the ext4 image. In
 # particular, never rsync the host's /dev, /proc or /sys into the guest rootfs.
-umount -R "$ROOTFS/sys"
-umount "$ROOTFS/proc"
-umount "$ROOTFS/dev/pts"
-umount "$ROOTFS/dev"
+unmount_builder_mounts
 rm -f "$ROOTFS/usr/bin/qemu-aarch64-static" "$ROOTFS/etc/resolv.conf"
 printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$ROOTFS/etc/resolv.conf"
 rm -f "$ROOTFS"/var/cache/pacman/pkg/* 2>/dev/null || true
@@ -234,6 +288,9 @@ echo "[6/6] Manifest and checksum"
   echo "network=NetworkManager+wpa_supplicant"
   echo "bluetooth=BlueZ"
   echo "rootfs_build=local"
+  echo "source_cache=$DOWNLOAD"
+  echo "pacman_package_cache=$PKG_CACHE"
+  echo "pacman_download_sandbox=disabled for build only due to host Landlock limitation"
   echo "kernel_artifacts_embedded=$(if [[ -n "$KERNEL_ARTIFACTS" ]]; then echo yes; else echo no; fi)"
   echo "boot_note=U-Boot image is separate; see docs/boot-layout.md"
   echo "device_boot_validation=not yet performed"
@@ -242,6 +299,8 @@ echo "[6/6] Manifest and checksum"
 sha256sum "$FINAL_IMAGE" > "$OUT_DIR/rootfs.img.sha256"
 if (( BUILD_UID != 0 )); then chown "$BUILD_UID:$BUILD_GID" "$FINAL_IMAGE" "$OUT_DIR/rootfs.img.sha256" "$OUT_DIR/BUILD-MANIFEST.txt"; fi
 rm -rf "$WORK"
+echo "Persistent download cache: $DOWNLOAD"
+echo "Persistent pacman package cache: $PKG_CACHE"
 echo "Done: $FINAL_IMAGE"
 echo "Checksum: $OUT_DIR/rootfs.img.sha256"
 echo "This is an ext4 filesystem, not an Android boot.img or super.img."
