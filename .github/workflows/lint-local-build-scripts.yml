@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'scripts/**'
+      - 'flash.sh'
       - '.github/workflows/build-uboot.yml'
       - '.github/workflows/lint-local-build-scripts.yml'
   workflow_dispatch:
@@ -13,8 +14,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Check local rootfs script syntax
-        run: bash -n scripts/build-rootfs.sh
+      - name: Check local rootfs and flash script syntax
+        run: |
+          bash -n scripts/build-rootfs.sh
+          bash -n flash.sh
       - name: Confirm hosted rootfs builder is absent
         run: test ! -e .github/workflows/build-rootfs.yml
       - name: Check required interfaces are present
@@ -24,3 +27,7 @@ jobs:
           grep -q 'bluez-utils' scripts/build-rootfs.sh
           grep -q 'NetworkManager.service' scripts/build-rootfs.sh
           grep -q 'blkmap' docs/boot-layout.md
+          grep -q 'ERASE USERDATA' flash.sh
+          grep -q 'is-logical:' flash.sh
+          grep -q 'flash "$TARGET_LP"' flash.sh
+          ! grep -Eq 'flash[[:space:]]+super' flash.sh
