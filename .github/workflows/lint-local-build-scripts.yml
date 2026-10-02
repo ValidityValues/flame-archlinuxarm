@@ -26,6 +26,12 @@ jobs:
           grep -q 'download_cached' scripts/build-rootfs.sh
           grep -q 'PKG_CACHE="$OUT_DIR/pacman-cache"' scripts/build-rootfs.sh
           grep -q 'unmount_builder_mounts' scripts/build-rootfs.sh
+          grep -q 'terminate_stale_chroot_processes' scripts/build-rootfs.sh
+          grep -q 'umount -R "$ROOTFS/dev"' scripts/build-rootfs.sh
+          grep -q 'Server = http://de3.mirror.archlinuxarm.org/' scripts/build-rootfs.sh
+          grep -q 'ParallelDownloads = 1' scripts/build-rootfs.sh
+          grep -q 'pipewire-jack' scripts/build-rootfs.sh
+          grep -q -- '--disable-download-timeout' scripts/build-rootfs.sh
           grep -q -- '--disable-sandbox' scripts/build-rootfs.sh
           grep -q 'linux-firmware-qcom' scripts/build-rootfs.sh
           grep -q 'bluez-utils' scripts/build-rootfs.sh
