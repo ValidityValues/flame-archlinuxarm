@@ -1,0 +1,98 @@
+name: Build Arch Linux ARM rootfs
+on:
+  workflow_dispatch:
+    inputs:
+      image_size_mib:
+        description: ext4 image size in MiB; verify destination size before use
+        required: true
+        default: '3072'
+      ssh_public_key:
+        description: Optional SSH public key only; never enter a private key
+        required: false
+        default: ''
+  push:
+    paths:
+      - '.github/workflows/build-rootfs.yml'
+      - 'README.md'
+  schedule:
+    - cron: '41 5 * * 0'
+permissions:
+  contents: read
+concurrency:
+  group: flame-rootfs
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      ROOTFS_URL: https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+      SIZE_MIB: ${{ inputs.image_size_mib || '3072' }}
+      SSH_PUBLIC_KEY: ${{ inputs.ssh_public_key || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bsdtar curl e2fsprogs gnupg rsync zstd
+      - name: Download and verify rootfs
+        run: |
+          set -euxo pipefail
+          mkdir -p download rootfs stage
+          FILE=ArchLinuxARM-aarch64-latest.tar.gz
+          BASE="${ROOTFS_URL%/*}"
+          curl -fL --retry 5 "$ROOTFS_URL" -o "download/$FILE"
+          curl -fL --retry 5 "$BASE/$FILE.md5" -o "download/$FILE.md5"
+          curl -fL --retry 5 "$BASE/$FILE.sig" -o "download/$FILE.sig"
+          (cd download && md5sum -c "$FILE.md5")
+          curl -fL --retry 5 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x68B3537F39A313B3E574D06777193F152BDBE6A6' | gpg --batch --import
+          FPR="$(gpg --batch --with-colons --fingerprint 68B3537F39A313B3E574D06777193F152BDBE6A6 | awk -F: '$1=="fpr" {print $10; exit}')"
+          test "$FPR" = 68B3537F39A313B3E574D06777193F152BDBE6A6
+          gpg --batch --verify "download/$FILE.sig" "download/$FILE"
+      - name: Prepare ARM64 userspace
+        run: |
+          set -euxo pipefail
+          sudo bsdtar --numeric-owner --xattrs --acls -xpf download/ArchLinuxARM-aarch64-latest.tar.gz -C rootfs
+          file rootfs/usr/bin/bash | grep -E 'ARM aarch64|ARM64|AArch64'
+          echo flame-arch | sudo tee rootfs/etc/hostname
+          sudo mkdir -p rootfs/etc/ssh/sshd_config.d rootfs/root/.ssh
+          if [ -n "$SSH_PUBLIC_KEY" ]; then
+            printf '%s\n' "$SSH_PUBLIC_KEY" | sudo tee rootfs/root/.ssh/authorized_keys
+            sudo chmod 700 rootfs/root/.ssh
+            sudo chmod 600 rootfs/root/.ssh/authorized_keys
+            sudo chown -R 0:0 rootfs/root/.ssh
+            printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' | sudo tee rootfs/etc/ssh/sshd_config.d/90-flame.conf
+            sudo mkdir -p rootfs/etc/systemd/system/multi-user.target.wants
+            sudo ln -sf /usr/lib/systemd/system/sshd.service rootfs/etc/systemd/system/multi-user.target.wants/sshd.service
+          else
+            printf 'PasswordAuthentication no\nPermitRootLogin no\n' | sudo tee rootfs/etc/ssh/sshd_config.d/90-flame.conf
+            sudo rm -f rootfs/etc/systemd/system/multi-user.target.wants/sshd.service rootfs/etc/systemd/system/sockets.target.wants/sshd.socket
+          fi
+          sudo mkdir -p rootfs/etc/flame
+          printf 'Device: Google Pixel 4 (google-flame)\nUserspace: Arch Linux ARM AArch64\nKernel: build separately from linux-sm8150-mainline\nHardware boot: not yet validated\n' | sudo tee rootfs/etc/flame/BUILD_INFO
+          sudo rm -rf rootfs/var/cache/pacman/pkg/* rootfs/var/log/journal/*
+      - name: Create archive and ext4 image
+        run: |
+          set -euxo pipefail
+          [[ "$SIZE_MIB" =~ ^[0-9]+$ ]] && (( SIZE_MIB >= 1024 ))
+          sudo tar --numeric-owner --xattrs --acls --use-compress-program='zstd -T0 -10' -cf stage/flame-rootfs.tar.zst -C rootfs .
+          truncate -s "${SIZE_MIB}M" stage/flame-rootfs.ext4
+          sudo mkfs.ext4 -F -q -L FLAME_ROOTFS -m 0 -E lazy_itable_init=0,lazy_journal_init=0 stage/flame-rootfs.ext4
+          mkdir mnt-rootfs
+          sudo mount -o loop stage/flame-rootfs.ext4 mnt-rootfs
+          sudo rsync -aHAX --numeric-ids rootfs/ mnt-rootfs/
+          sync
+          sudo umount mnt-rootfs
+          sudo e2fsck -fn stage/flame-rootfs.ext4
+          zstd -T0 -10 -f stage/flame-rootfs.ext4 -o stage/flame-rootfs.ext4.zst
+          sudo chown "$USER":"$USER" stage/flame-rootfs.ext4
+          printf 'device=google-flame\ndistribution=Arch Linux ARM AArch64\nsize_mib=%s\nformat=ext4\nstatus=BUILD_ONLY_NOT_HARDWARE_VALIDATED\nwarning=Never flash this standalone ext4 image to physical super.\n' "$SIZE_MIB" > stage/MANIFEST.txt
+          sha256sum download/ArchLinuxARM-aarch64-latest.tar.gz > stage/UPSTREAM-SHA256.txt
+          cd stage
+          sha256sum flame-rootfs.tar.zst flame-rootfs.ext4.zst > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flame-archlinuxarm-rootfs-${{ github.run_number }}
+          path: stage/
+          if-no-files-found: error
+          retention-days: 30
