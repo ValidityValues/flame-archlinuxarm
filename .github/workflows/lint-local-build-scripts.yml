@@ -20,6 +20,20 @@ jobs:
           bash -n flash.sh
       - name: Confirm hosted rootfs builder is absent
         run: test ! -e .github/workflows/build-rootfs.yml
+      - name: Check command-line validation and non-destructive flash target
+        run: |
+          bash scripts/build-rootfs.sh --help >/dev/null
+          if bash scripts/build-rootfs.sh --desktop >/dev/null 2>&1; then
+            echo "Expected a missing --desktop value to fail" >&2
+            exit 1
+          fi
+          if bash scripts/build-rootfs.sh --size-mib >/dev/null 2>&1; then
+            echo "Expected a missing --size-mib value to fail" >&2
+            exit 1
+          fi
+          ! grep -Eq 'flash[[:space:]]+(userdata|super)([[:space:]]|$)' flash.sh
+          grep -q 'flash "$TARGET_LP" "$IMAGE"' flash.sh
+          grep -q 'Required SHA-256 file not found' flash.sh
       - name: Check required interfaces are present
         run: |
           grep -q 'rootfs.img' scripts/build-rootfs.sh
