@@ -17,13 +17,26 @@ Android's `super` is a physical GPT partition that stores metadata and extents f
 
 Consequently, putting `/boot/Image`, the Pixel 4 DTB, and an initramfs inside an ext4 image that lives as a logical partition inside `super` does not by itself let ordinary U-Boot `ext4load` read those files. U-Boot first needs access to the block device/partition containing the filesystem. The standard dynamic-partition mapping happens later in Android userspace, not automatically in U-Boot.
 
-The SM8150 U-Boot reference artifact built by this project has UFS/SCSI, ext4 loading, `booti`, `bootm`, FIT-related boot commands and Android boot-image support in its configuration. However, this is not proof that the branch supports parsing Android LP metadata and exposing a custom logical partition to `ext4load`. The current build used `qcom_defconfig`; it is a reference build, not a verified Pixel 4 boot image. Do not flash it on that basis alone.
+This project now targets the device-specific source/ref supplied for Pixel 4:
+- Source: https://gitlab.com/andrewgigena/u-boot
+- Branch: `andrew/google-flame`
+- Config fragments: `qcom_defconfig qcom-phone.config sm8150-google-flame.config`
+- DTB: `.output/dts/upstream/src/arm64/qcom/sm8150-google-flame.dtb`
+
+The U-Boot workflow applies the supplied `preboot` blkmap recipe and packages `u-boot-nodtb.bin.gz + sm8150-google-flame.dtb` into Android-format `u-boot.img` using the given base, kernel offset, and page size. This means ABL can potentially start this U-Boot image through the normal Android boot-image path. A successful build still does not prove the device will boot it; use temporary `fastboot boot` where the image format/bootloader permits and keep a tested restore path.
+
+### What the supplied blkmap preboot actually means
+
+The supplied preboot calculates the physical start and size of the Android `userdata` partition, then creates a virtual block device named `root` mapped over that entire region. This lets U-Boot's partition scanner inspect a nested disk/partition layout stored *inside userdata* and find an EFI loader there. It does not create a mapping for Android logical partitions inside `super`.
+
+**Important trade-off:** the exact Nura/andrew recipe uses `userdata` as backing storage for the nested boot-file layout. Building U-Boot with this setting does not modify the phone, but installing the nested layout does write to `userdata`. If the requirement remains to leave `userdata` entirely untouched, do not install that nested layout there; a different U-Boot-readable boot-file source must be designed.
 
 ## Correct division of responsibilities
 
-1. **`rootfs.img`** — one ext4 filesystem containing the full Arch Linux ARM installation (the desktop, NetworkManager, BlueZ, libraries, and packages). The CI artifact is compressed as `rootfs.img.zst`; decompress it to obtain `rootfs.img`.
-2. **Boot bundle** — a U-Boot-readable FIT image (`boot.itb`) containing the matched kernel `Image` and `sm8150-google-flame.dtb`; a working system rooted inside `super` also needs an initramfs that maps the Android LP extents to a Linux device-mapper block device before mounting the root filesystem.
-3. **Boot source** — U-Boot must load the FIT from a source it can actually access: a suitable physical boot partition/filesystem, or a temporary network/host-loaded path. Storing the FIT only inside the logical rootfs partition in `super` requires LP parsing in U-Boot, which has not been verified for the current branch.
+1. **`rootfs.img`** — one ext4 filesystem containing Arch Linux ARM, the selected DE, NetworkManager, BlueZ, firmware files and packages. It is built locally with `scripts/build-rootfs.sh`; there is no hosted rootfs build workflow.
+2. **`u-boot.img`** — the Android boot-image-format U-Boot artifact produced from `andrew/google-flame`. It is a separate boot-chain image, not part of the ext4 root filesystem.
+3. **Linux boot files** — the kernel `Image`, Pixel 4 DTB, and matching modules can optionally be copied into `/boot` inside `rootfs.img`. This helps only when U-Boot/EFI can actually read that filesystem. The current blkmap recipe scans a nested layout in `userdata`, not a dynamic partition inside `super`.
+4. **Early root mount** — if the rootfs itself is inside `super`, a matching initramfs must create a `dm-linear` mapping for the target logical partition from the actual LP metadata and mount it. A plain `root=/dev/sdaN` does not identify an Android logical partition inside `super`.
 4. **Early root mount** — because the rootfs lives inside `super`, the initramfs must create a `dm-linear` mapping for the chosen logical partition using the actual LP metadata, then mount that mapped device. A plain `root=/dev/sdaN` does not identify a logical partition inside `super`.
 
 ## What is still needed before a genuinely bootable image
@@ -33,4 +46,4 @@ The SM8150 U-Boot reference artifact built by this project has UFS/SCSI, ext4 lo
 - A tested early-userspace LP mapper/initramfs, plus a matching kernel, DTB and modules.
 - A restorable backup of original `super` data and LP metadata before any resize/write.
 
-Until these conditions are met, CI should produce the ext4 `rootfs.img` and kernel/U-Boot build artifacts separately, but should not claim the rootfs is bootable or give a command to flash it to the physical `super` partition. `userdata` remains untouched.
+Until these conditions are met, the local builder produces the ext4 `rootfs.img` and GitHub Actions builds the kernel/U-Boot artifacts separately. Do not claim the rootfs is bootable or flash the standalone ext4 image to the physical `super` partition. Building U-Boot does not write to the device; installing the nested blkmap layout described above would write to `userdata`.
