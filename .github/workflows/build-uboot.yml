@@ -1,15 +1,11 @@
-name: Build SM8150 U-Boot (reference)
+name: Build SM8150 U-Boot for Google Pixel 4
 on:
   workflow_dispatch:
     inputs:
       uboot_ref:
-        description: Branch, tag or commit from sm8150-mainline/u-boot
+        description: U-Boot branch or commit
         required: true
-        default: caleb/rbx-integration
-      defconfig:
-        description: U-Boot defconfig to build (review device support before use)
-        required: true
-        default: qcom_defconfig
+        default: andrew/google-flame
   push:
     paths:
       - '.github/workflows/build-uboot.yml'
@@ -24,71 +20,93 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      UBOOT_SRC: https://gitlab.com/sm8150-mainline/u-boot.git
-      UBOOT_REF: ${{ inputs.uboot_ref || 'caleb/rbx-integration' }}
-      DEFCONFIG: ${{ inputs.defconfig || 'qcom_defconfig' }}
+      UBOOT_SRC: https://gitlab.com/andrewgigena/u-boot.git
+      UBOOT_REF: ${{ inputs.uboot_ref || 'andrew/google-flame' }}
+      DEVICE: sm8150-google-flame
       CROSS_COMPILE: aarch64-linux-gnu-
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential device-tree-compiler flex gcc-aarch64-linux-gnu git libgnutls28-dev libncurses-dev libssl-dev make python3 python3-dev python3-setuptools swig
-      - name: Fetch U-Boot source
+          sudo apt-get install -y bc bison build-essential device-tree-compiler flex gcc-aarch64-linux-gnu git libgnutls28-dev libncurses-dev libssl-dev make mkbootimg python3 python3-dev python3-setuptools swig gzip
+      - name: Fetch device-specific U-Boot source and configure blkmap preboot
         run: |
           set -euxo pipefail
-          git clone --filter=blob:none "$UBOOT_SRC" u-boot
-          git -C u-boot checkout --detach "$UBOOT_REF"
+          git clone --depth=1 --branch "$UBOOT_REF" "$UBOOT_SRC" u-boot
           git -C u-boot log -1 --format='source_commit=%H%nsubject=%s' | tee stage-source.txt
-          test -f "u-boot/configs/$DEFCONFIG"
-          if [ -f u-boot/pixel4.txt ]; then cp u-boot/pixel4.txt stage-source-pixel4.txt; fi
-      - name: Build U-Boot
+          cd u-boot
+          test -f board/qualcomm/qcom-phone.env
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("board/qualcomm/qcom-phone.env")
+          lines = p.read_text().splitlines()
+          dollar = chr(36)
+          preboot = (
+              "preboot=scsi scan; part start scsi 0 userdata userdata_start; "
+              "part size scsi 0 userdata userdata_size; blkmap create root; "
+              "blkmap map root 0 0x" + dollar + "{userdata_size} linear scsi 0 0x" + dollar + "{userdata_start}"
+          )
+          found = False
+          output = []
+          for line in lines:
+              if line.startswith("preboot="):
+                  if not found:
+                      output.append(preboot)
+                      found = True
+              else:
+                  output.append(line)
+          if not found:
+              output.append(preboot)
+          p.write_text("\n".join(output) + "\n")
+          if preboot not in p.read_text().splitlines():
+              raise SystemExit("Failed to install blkmap preboot setting")
+          PY
+          cp board/qualcomm/qcom-phone.env ../qcom-phone.env
+          cd ..
+      - name: Build U-Boot and package Android boot image
         run: |
           set -euxo pipefail
           cd u-boot
-          make CROSS_COMPILE="$CROSS_COMPILE" "$DEFCONFIG"
-          make -j"$(nproc)" CROSS_COMPILE="$CROSS_COMPILE"
+          make mrproper
+          make CROSS_COMPILE="$CROSS_COMPILE" O=.output qcom_defconfig qcom-phone.config "$DEVICE.config"
+          make CROSS_COMPILE="$CROSS_COMPILE" O=.output -j"$(nproc)"
+          DTB=".output/dts/upstream/src/arm64/qcom/$DEVICE.dtb"
+          test -s .output/u-boot-nodtb.bin
+          test -s "$DTB"
+          gzip -n -c .output/u-boot-nodtb.bin > .output/u-boot-nodtb.bin.gz
+          cat .output/u-boot-nodtb.bin.gz "$DTB" > .output/uboot-dtb
+          mkbootimg --base '0x0' --kernel_offset '0x00008000' --pagesize '4096' --kernel .output/uboot-dtb -o .output/u-boot.img
+          test -s .output/u-boot.img
+          file .output/u-boot.img .output/u-boot-nodtb.bin .output/uboot-dtb
           cd "$GITHUB_WORKSPACE"
           mkdir -p stage/uboot
-          for f in \
-            u-boot/u-boot.bin \
-            u-boot/u-boot.elf \
-            u-boot/u-boot-nodtb.bin \
-            u-boot/u-boot-dtb.bin \
-            u-boot/u-boot.dtb \
-            u-boot/u-boot.itb \
-            u-boot/u-boot.img \
-            u-boot/u-boot-dtb.img \
-            u-boot/spl/u-boot-spl.bin \
-            u-boot/tpl/u-boot-tpl.bin \
-            u-boot/pixel4.txt; do
-            if [ -s "$f" ]; then
-              cp --parents "$f" stage/uboot/
-            fi
-          done
-          cp u-boot/.config stage/uboot/uboot.config
-          mkdir -p stage/uboot/host-tools
-          for f in u-boot/tools/mkimage u-boot/tools/mkeficapsule; do
-            if [ -x "$f" ]; then cp "$f" stage/uboot/host-tools/; fi
-          done
-          test -s stage/uboot/u-boot/u-boot.bin -o -s stage/uboot/u-boot/u-boot.elf -o -s stage/uboot/u-boot/u-boot-nodtb.bin
+          cp u-boot/.output/u-boot.img stage/uboot/u-boot.img
+          cp u-boot/.output/u-boot-nodtb.bin stage/uboot/
+          cp u-boot/.output/u-boot-nodtb.bin.gz stage/uboot/
+          cp u-boot/.output/uboot-dtb stage/uboot/
+          cp "u-boot/.output/dts/upstream/src/arm64/qcom/$DEVICE.dtb" stage/uboot/sm8150-google-flame.dtb
+          cp u-boot/.output/.config stage/uboot/uboot.config
+          cp u-boot/board/qualcomm/qcom-phone.env stage/uboot/qcom-phone.env
+          cp qcom-phone.env stage/uboot/qcom-phone.env
           cp stage-source.txt stage/uboot/SOURCE.txt
           cat > stage/uboot/BUILD-NOTES.txt <<EOF
-          Target device: Google Pixel 4 (google-flame), Qualcomm SM8150
+          Target: Google Pixel 4 (google-flame), Qualcomm SM8150
           Source: $UBOOT_SRC
-          Requested ref: $UBOOT_REF
-          Defconfig: $DEFCONFIG
-          This is a compile artifact only. It is NOT asserted to be a Pixel-4-ready Android boot image.
-          Do not flash any output until image format, load address, entry point, ABL compatibility, and restore procedure are confirmed.
+          Ref: $UBOOT_REF
+          Device config: $DEVICE.config
+          Android boot image: u-boot.img (built using the supplied mkbootimg offsets/page size)
+          Preboot: scans UFS and exposes userdata as a blkmap device named root so its nested partition table can be scanned.
+          Caution: this preboot layout expects boot files in storage backed by userdata. It does not mean U-Boot can read Android logical partitions inside super.
+          This artifact is build-only. Do not flash until the target boot partition, current A/B slot, and restore method are confirmed.
           EOF
-          if [ -f stage-source-pixel4.txt ]; then cp stage-source-pixel4.txt stage/uboot/pixel4-source.txt; fi
           (
             cd stage/uboot
-            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            sha256sum u-boot.img u-boot-nodtb.bin u-boot-nodtb.bin.gz uboot-dtb sm8150-google-flame.dtb uboot.config qcom-phone.env SOURCE.txt BUILD-NOTES.txt > SHA256SUMS
           )
       - uses: actions/upload-artifact@v4
         with:
-          name: flame-uboot-reference-${{ github.run_number }}
+          name: flame-uboot-${{ github.run_number }}
           path: stage/uboot/
           if-no-files-found: error
           compression-level: 0
