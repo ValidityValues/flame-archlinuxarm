@@ -10,6 +10,12 @@ This repository provides a local AArch64 Arch Linux ARM rootfs builder and a dev
 - `userdata` is to remain untouched.
 - Fastboot bootloader reports sizes for `system_b`, `vendor_b`, `product_b`, `system_ext_b`; some A-side queries return `variable not found`. This is not enough information to safely resize `super`.
 
+## Bootability status
+
+The current scripts can build an Arch Linux ARM ext4 filesystem and a U-Boot Android boot image, but they do **not yet provide a complete, verified end-to-end boot path**. In particular, the supplied U-Boot `preboot` scans a nested boot layout backed by `userdata`, while this project intends to preserve `userdata` and store the root filesystem in an Android logical partition inside `super`. Ordinary U-Boot partition scanning does not automatically expose Android dynamic logical partitions.
+
+Do not treat a successful rootfs or U-Boot build as proof that Arch Linux ARM will boot. Completing the boot path requires a boot-file source U-Boot can read without overwriting `userdata`, plus an initramfs/root-mapping method for the actual `super` LP metadata, followed by a temporary boot test on the phone.
+
 ## Local rootfs build (no GitHub Actions)
 
 The Arch Linux ARM root filesystem is built **locally on the host PC**, not by a hosted workflow. From Fedora 44 x86_64, install the tools:
@@ -47,12 +53,9 @@ After building `out/rootfs.img`, run the interactive helper from the repository 
 bash flash.sh
 ```
 
-It offers two destinations:
+It offers exactly one write target: the dedicated logical partition `flame_root` inside `super`, using **Fastbootd**. The helper refuses to continue unless Fastboot positively identifies the phone as `flame` and confirms that `flame_root` is a logical partition with enough capacity. It requires the builder-generated SHA-256 file and asks for an explicit confirmation before writing.
 
-- **`userdata`**: writes the ext4 image to the physical `userdata` partition. This replaces that filesystem and destroys Android user data. Continue only if you intentionally accept that loss and have a verified backup.
-- **Logical partition inside `super`**: writes to the dedicated logical partition `flame_root` using **Fastbootd**. That logical partition must already exist in valid Android LP metadata and be large enough. The script checks that Fastbootd identifies it as a logical partition and checks its capacity before writing.
-
-The second option does **not** flash the image to the physical `super` container and does not create/resize logical partitions. Partition creation and LP metadata changes require a separate, reviewed procedure and verified backups. The script asks for an explicit confirmation before either write. To select a device when multiple Fastboot devices are connected, set `FASTBOOT_SERIAL`:
+The helper never writes to `userdata` or the physical `super` container. The logical partition must already exist in valid Android LP metadata; this project does not create or resize it. Partition creation and LP metadata changes require a separate, reviewed procedure and verified backups. To select a device when multiple Fastboot devices are connected, set `FASTBOOT_SERIAL`:
 
 ```bash
 FASTBOOT_SERIAL=YOUR_SERIAL bash flash.sh
