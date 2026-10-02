@@ -72,6 +72,7 @@ ROOTFS="$WORK/rootfs"
 MNT="$WORK/mnt"
 CACHE_DIR="$OUT_DIR/cache"
 DOWNLOAD="$CACHE_DIR/archlinuxarm"
+OLD_DOWNLOAD="$WORK/download"
 PKG_CACHE="$OUT_DIR/pacman-cache"
 TMP_IMAGE="$OUT_DIR/.rootfs.img.tmp"
 FINAL_IMAGE="$OUT_DIR/rootfs.img"
@@ -122,6 +123,18 @@ chmod 700 "$GPG_HOME"
 
 echo "[preflight] Unmount stale chroot mounts and reset the working rootfs"
 unmount_builder_mounts
+
+# Migrate the archive downloaded by the previous version of this script so
+# the first run with the new persistent cache does not download ~800 MiB again.
+if [[ -d "$OLD_DOWNLOAD" ]]; then
+  for cached_file in "$FILE" "$FILE.md5" "$FILE.sig"; do
+    if [[ ! -s "$DOWNLOAD/$cached_file" && -s "$OLD_DOWNLOAD/$cached_file" ]]; then
+      cp -a "$OLD_DOWNLOAD/$cached_file" "$DOWNLOAD/$cached_file"
+      echo "Migrated existing download into persistent cache: $cached_file"
+    fi
+  done
+fi
+
 rm -rf "$ROOTFS" "$MNT" "$TMP_IMAGE"
 mkdir -p "$ROOTFS" "$MNT" "$WORK"
 
