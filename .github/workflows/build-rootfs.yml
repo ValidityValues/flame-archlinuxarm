@@ -198,10 +198,11 @@ jobs:
           sudo umount mnt-rootfs
           sudo e2fsck -fn stage/flame-rootfs.ext4
           zstd -T0 -10 -f stage/flame-rootfs.ext4 -o stage/flame-rootfs.ext4.zst
+          rm -f stage/flame-rootfs.ext4
           printf 'device=google-flame\ndistribution=Arch Linux ARM AArch64\ndesktop=%s\nsize_mib=%s\nformat=ext4\nnetwork=NetworkManager+wpa_supplicant\nbluetooth=BlueZ\nstatus=BUILD_ONLY_NOT_HARDWARE_VALIDATED\nwarning=Standalone ext4 image is not an Android super.img and must never be flashed to physical super.\n' "$DESKTOP" "$SIZE_MIB" > stage/MANIFEST.txt
           (
             cd stage
-            sha256sum flame-rootfs.tar.zst flame-rootfs.ext4 flame-rootfs.ext4.zst packages-installed.txt packages-to-install.txt firmware-audit.txt > SHA256SUMS
+            sha256sum flame-rootfs.tar.zst flame-rootfs.ext4.zst packages-installed.txt packages-to-install.txt firmware-audit.txt > SHA256SUMS
           )
       - uses: actions/upload-artifact@v4
         with:
