@@ -38,6 +38,15 @@ The supplied preboot calculates the physical start and size of the Android `user
 3. **Linux boot files** — the kernel `Image`, Pixel 4 DTB, and matching modules can optionally be copied into `/boot` inside `rootfs.img`. This helps only when U-Boot/EFI can actually read that filesystem. The current blkmap recipe scans a nested layout in `userdata`, not a dynamic partition inside `super`.
 4. **Early root mount** — because the rootfs lives inside `super`, the initramfs must create a `dm-linear` mapping for the chosen logical partition using the actual LP metadata, then mount that mapped device. A plain `root=/dev/sdaN` does not identify a logical partition inside `super`.
 
+## Interactive flashing helper
+
+Run `bash flash.sh` after building `out/rootfs.img`. The helper offers two distinct operations:
+
+- `userdata`: writes the image to the physical userdata partition after an explicit `ERASE USERDATA` confirmation. This destroys existing Android user data.
+- `super`: despite the menu label, this means the dedicated logical partition `flame_root` *inside* the physical super container. It requires Fastbootd and checks `is-logical:flame_root` plus the target partition capacity. The logical partition must already exist; the helper does not resize `super` or alter LP metadata.
+
+The helper deliberately has no command that writes a standalone ext4 image to physical `super`. A raw `fastboot flash super rootfs.img` would overwrite the Android LP container and is not a valid way to install a root filesystem.
+
 ## What is still needed before a genuinely bootable image
 
 - A current `lpdump` report for both metadata slots, with serial numbers redacted, so we can determine free extents and create a dedicated logical partition without altering slot B's logical partitions.
