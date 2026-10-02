@@ -52,8 +52,14 @@ for cmd in curl gpg bsdtar qemu-aarch64-static rsync mkfs.ext4 e2fsck mount umou
 done
 if [[ "$(uname -m)" != aarch64 ]]; then
   systemctl restart systemd-binfmt.service 2>/dev/null || true
-  if ! grep -lF qemu-aarch64-static /proc/sys/fs/binfmt_misc/* 2>/dev/null | grep -q .; then
-    echo "AArch64 binfmt handler is not registered; install qemu-user-static-aarch64 and restart systemd-binfmt." >&2
+  BINFMT_HANDLER=/proc/sys/fs/binfmt_misc/qemu-aarch64
+  if [[ ! -r "$BINFMT_HANDLER" ]] ||
+     ! grep -Fq 'interpreter /usr/bin/qemu-aarch64-static' "$BINFMT_HANDLER" ||
+     ! grep -Fxq 'enabled' "$BINFMT_HANDLER"; then
+    echo "AArch64 binfmt handler is not registered or is disabled." >&2
+    echo "Expected an enabled $BINFMT_HANDLER using /usr/bin/qemu-aarch64-static." >&2
+    echo "Install qemu-user-static-aarch64 and restart systemd-binfmt, then check the handler file." >&2
+    [[ ! -r "$BINFMT_HANDLER" ]] || cat "$BINFMT_HANDLER" >&2
     exit 1
   fi
 fi
