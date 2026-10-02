@@ -188,21 +188,21 @@ jobs:
             exit 1
           fi
           sudo tar --numeric-owner --xattrs --acls --use-compress-program='zstd -T0 -10' -cf stage/flame-rootfs.tar.zst -C rootfs .
-          truncate -s "${SIZE_MIB}M" stage/flame-rootfs.ext4
-          mkfs.ext4 -F -q -L FLAME_ROOTFS -m 0 -E lazy_itable_init=0,lazy_journal_init=0 stage/flame-rootfs.ext4
+          truncate -s "${SIZE_MIB}M" stage/rootfs.img
+          mkfs.ext4 -F -q -L FLAME_ROOT -m 0 -E lazy_itable_init=0,lazy_journal_init=0 stage/rootfs.img
           mkdir mnt-rootfs
-          sudo mount -o loop stage/flame-rootfs.ext4 mnt-rootfs
+          sudo mount -o loop stage/rootfs.img mnt-rootfs
           sudo rsync -aHAX --numeric-ids rootfs/ mnt-rootfs/
           sync
           df -h mnt-rootfs | tee stage/ext4-space.txt
           sudo umount mnt-rootfs
-          sudo e2fsck -fn stage/flame-rootfs.ext4
-          zstd -T0 -10 -f stage/flame-rootfs.ext4 -o stage/flame-rootfs.ext4.zst
-          rm -f stage/flame-rootfs.ext4
-          printf 'device=google-flame\ndistribution=Arch Linux ARM AArch64\ndesktop=%s\nsize_mib=%s\nformat=ext4\nnetwork=NetworkManager+wpa_supplicant\nbluetooth=BlueZ\nstatus=BUILD_ONLY_NOT_HARDWARE_VALIDATED\nwarning=Standalone ext4 image is not an Android super.img and must never be flashed to physical super.\n' "$DESKTOP" "$SIZE_MIB" > stage/MANIFEST.txt
+          sudo e2fsck -fn stage/rootfs.img
+          zstd -T0 -10 -f stage/rootfs.img -o stage/rootfs.img.zst
+          rm -f stage/rootfs.img
+          printf 'device=google-flame\ndistribution=Arch Linux ARM AArch64\ndesktop=%s\nsize_mib=%s\nfilesystem_image=rootfs.img.zst (decompress to rootfs.img)\nformat=ext4\nnetwork=NetworkManager+wpa_supplicant\nbluetooth=BlueZ\nboot=requires separate U-Boot-accessible kernel/FIT path; see docs/boot-layout.md\nstatus=ROOTFS_BUILD_ONLY_NOT_HARDWARE_VALIDATED\nwarning=Do not flash this standalone ext4 image to physical super. Create a dedicated logical partition only after LP metadata is backed up and reviewed.\n' "$DESKTOP" "$SIZE_MIB" > stage/MANIFEST.txt
           (
             cd stage
-            sha256sum flame-rootfs.tar.zst flame-rootfs.ext4.zst packages-installed.txt packages-to-install.txt firmware-audit.txt > SHA256SUMS
+            sha256sum flame-rootfs.tar.zst rootfs.img.zst packages-installed.txt packages-to-install.txt firmware-audit.txt > SHA256SUMS
           )
       - uses: actions/upload-artifact@v4
         with:
