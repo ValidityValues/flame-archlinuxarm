@@ -38,6 +38,16 @@ The supplied preboot calculates the physical start and size of the Android `user
 3. **Linux boot files** — the kernel `Image`, Pixel 4 DTB, and matching modules can optionally be copied into `/boot` inside `rootfs.img`. This helps only when U-Boot/EFI can actually read that filesystem. The current blkmap recipe scans a nested layout in `userdata`, not a dynamic partition inside `super`.
 4. **Early root mount** — because the rootfs lives inside `super`, the initramfs must create a `dm-linear` mapping for the chosen logical partition using the actual LP metadata, then mount that mapped device. A plain `root=/dev/sdaN` does not identify a logical partition inside `super`.
 
+## End-to-end boot status
+
+As currently implemented, this repository does not generate all pieces needed to boot Arch Linux ARM from the planned `flame_root` logical partition while preserving `userdata`. The U-Boot workflow builds U-Boot as the Android boot-image kernel payload, but its configured `preboot` expects a separate nested boot layout in `userdata`. Embedding a kernel/DTB file under the ext4 rootfs's `/boot` does not solve this: U-Boot must be able to read those files before Linux starts.
+
+A complete implementation still needs both:
+- A boot-time location and packaging route for the Linux kernel, matching DTB and initramfs that does not depend on rewriting `userdata`.
+- Early userspace that maps the actual `flame_root` logical partition from Android LP metadata in the physical `super` device before mounting the ext4 filesystem.
+
+Do not flash the generated U-Boot image to a boot partition or write a rootfs image to the phone solely because CI/build scripts succeed. First inspect the generated boot image, test with a supported temporary boot route, and keep a verified restore path. Hardware boot cannot be confirmed by host-side shell tests.
+
 ## Interactive flashing helper
 
 Run `bash flash.sh` after building `out/rootfs.img`. The helper offers two distinct operations:
