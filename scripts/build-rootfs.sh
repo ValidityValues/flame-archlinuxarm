@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Preserve the original arguments: the parser below consumes "$@".
+ORIGINAL_ARGS=("$@")
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 DESKTOP="plasma-desktop"
@@ -21,12 +24,23 @@ EOF
 }
 while (($#)); do
   case "$1" in
-    --desktop) DESKTOP="$2"; shift 2 ;;
-    --size-mib) SIZE_MIB="$2"; shift 2 ;;
-    --out) OUT_DIR="$2"; shift 2 ;;
-    --user) TARGET_USER="$2"; shift 2 ;;
-    --ssh-key) SSH_KEY="$2"; shift 2 ;;
-    --kernel-artifacts) KERNEL_ARTIFACTS="$2"; shift 2 ;;
+    --desktop|--size-mib|--out|--user|--ssh-key|--kernel-artifacts)
+      option="$1"
+      if (($# < 2)) || [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "Missing value for $option" >&2
+        usage >&2
+        exit 2
+      fi
+      case "$option" in
+        --desktop) DESKTOP="$2" ;;
+        --size-mib) SIZE_MIB="$2" ;;
+        --out) OUT_DIR="$2" ;;
+        --user) TARGET_USER="$2" ;;
+        --ssh-key) SSH_KEY="$2" ;;
+        --kernel-artifacts) KERNEL_ARTIFACTS="$2" ;;
+      esac
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -38,7 +52,7 @@ case "$DESKTOP" in none|plasma-desktop|xfce4|lxqt|gnome) ;; *) echo "Unknown des
 [[ -z "$KERNEL_ARTIFACTS" || -d "$KERNEL_ARTIFACTS" ]] || { echo "Kernel artifacts directory not found" >&2; exit 2; }
 
 if (( EUID != 0 )); then
-  exec sudo env FLAME_BUILD_UID="$(id -u)" FLAME_BUILD_GID="$(id -g)" bash "$0" "$@"
+  exec sudo env FLAME_BUILD_UID="$(id -u)" FLAME_BUILD_GID="$(id -g)" bash "$0" "${ORIGINAL_ARGS[@]}"
 fi
 BUILD_UID="$(printenv FLAME_BUILD_UID || echo 0)"
 BUILD_GID="$(printenv FLAME_BUILD_GID || echo 0)"
