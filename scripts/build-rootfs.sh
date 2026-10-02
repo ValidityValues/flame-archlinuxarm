@@ -38,7 +38,7 @@ case "$DESKTOP" in none|plasma-desktop|xfce4|lxqt|gnome) ;; *) echo "Unknown des
 [[ -z "$KERNEL_ARTIFACTS" || -d "$KERNEL_ARTIFACTS" ]] || { echo "Kernel artifacts directory not found" >&2; exit 2; }
 
 if (( EUID != 0 )); then
-  exec sudo env FLAME_BUILD_UID="$(id -u)" FLAME_BUILD_GID="$(id -g)" "$0" "$@"
+  exec sudo env FLAME_BUILD_UID="$(id -u)" FLAME_BUILD_GID="$(id -g)" bash "$0" "$@"
 fi
 BUILD_UID="$(printenv FLAME_BUILD_UID || echo 0)"
 BUILD_GID="$(printenv FLAME_BUILD_GID || echo 0)"
@@ -186,6 +186,13 @@ Firmware: linux-firmware-qcom, linux-firmware-atheros, linux-firmware-whence
 Bootloader: separate U-Boot Android boot image; see docs/boot-layout.md
 Hardware boot and Wi-Fi/BT: not yet validated
 EOF
+
+# Leave the chroot mounts before copying the tree into the ext4 image. In
+# particular, never rsync the host's /dev, /proc or /sys into the guest rootfs.
+umount -R "$ROOTFS/sys"
+umount "$ROOTFS/proc"
+umount "$ROOTFS/dev/pts"
+umount "$ROOTFS/dev"
 rm -f "$ROOTFS/usr/bin/qemu-aarch64-static" "$ROOTFS/etc/resolv.conf"
 printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$ROOTFS/etc/resolv.conf"
 rm -f "$ROOTFS"/var/cache/pacman/pkg/* 2>/dev/null || true
