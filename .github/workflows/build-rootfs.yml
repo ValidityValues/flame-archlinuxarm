@@ -126,7 +126,9 @@ jobs:
           mapfile -t PKGS < stage/packages-to-install.txt
           sudo chroot rootfs /usr/bin/pacman -Syu --noconfirm --needed "${PKGS[@]}"
           sudo rm -f rootfs/usr/bin/qemu-aarch64-static
-          sudo mkdir -p rootfs/etc/ssh/sshd_config.d rootfs/root/.ssh rootfs/etc/NetworkManager/conf.d rootfs/etc/flame
+          sudo mkdir -p rootfs/etc/ssh/sshd_config.d rootfs/root/.ssh rootfs/etc/NetworkManager/conf.d rootfs/etc/flame rootfs/etc/systemd/system/multi-user.target.wants
+          sudo chown "$USER":"$USER" stage/packages-installed.txt 2>/dev/null || true
+          sudo chroot rootfs /usr/bin/pacman -Q > stage/packages-installed.txt
           echo flame-arch | sudo tee rootfs/etc/hostname >/dev/null
           if [ -n "$SSH_PUBLIC_KEY" ]; then
             printf '%s\n' "$SSH_PUBLIC_KEY" | sudo tee rootfs/root/.ssh/authorized_keys >/dev/null
@@ -167,19 +169,15 @@ jobs:
           sudo chown -R "$USER":"$USER" stage
           cleanup_mounts
           trap - EXIT
-          sudo chown -R "$USER":"$USER" rootfs
-          sudo chown -R 0:0 rootfs
           sudo find rootfs/var/cache/pacman/pkg -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
           sudo find rootfs/var/log/journal -mindepth 1 -delete 2>/dev/null || true
-          sudo chown -R "$USER":"$USER" rootfs
-          sudo chown -R 0:0 rootfs
           {
             find rootfs/usr/lib/firmware/ath10k/WCN3990 -type f 2>/dev/null || true
             find rootfs/usr/lib/firmware/qca -type f 2>/dev/null || true
             find rootfs/usr/lib/firmware/qcom/sm8150 -type f 2>/dev/null || true
           } | sed 's#^rootfs##' | sort -u > stage/firmware-audit.txt
           sudo chown "$USER":"$USER" stage/firmware-audit.txt
-          sudo chroot rootfs /usr/bin/pacman -Q 2>/dev/null > stage/packages-installed.txt || true
+          sudo chown "$USER":"$USER" stage/packages-installed.txt
       - name: Create rootfs archive and standalone ext4 image
         run: |
           set -euxo pipefail
