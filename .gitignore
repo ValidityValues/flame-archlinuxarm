@@ -1,0 +1,6 @@
+# Local build products; the image is large and must not be committed.
+out/
+.build-rootfs/
+*.img
+*.img.zst
+*.tar.zst
