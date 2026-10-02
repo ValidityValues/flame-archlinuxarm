@@ -1,0 +1,26 @@
+name: Validate local build scripts
+on:
+  push:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/build-uboot.yml'
+      - '.github/workflows/lint-local-build-scripts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell-syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check local rootfs script syntax
+        run: bash -n scripts/build-rootfs.sh
+      - name: Confirm hosted rootfs builder is absent
+        run: test ! -e .github/workflows/build-rootfs.yml
+      - name: Check required interfaces are present
+        run: |
+          grep -q 'rootfs.img' scripts/build-rootfs.sh
+          grep -q 'linux-firmware-qcom' scripts/build-rootfs.sh
+          grep -q 'bluez-utils' scripts/build-rootfs.sh
+          grep -q 'NetworkManager.service' scripts/build-rootfs.sh
+          grep -q 'systemd' docs/boot-layout.md
