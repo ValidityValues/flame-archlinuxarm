@@ -29,6 +29,11 @@ bash scripts/build-rootfs.sh --desktop plasma-desktop --size-mib 6144
 
 The script prompts for sudo when required, verifies the upstream Arch Linux ARM tarball/signature, runs ARM64 package installation under QEMU user emulation, configures NetworkManager/wpa_supplicant and BlueZ, installs Qualcomm/Atheros firmware packages, and creates:
 
+- Persistent source download cache: `out/cache/archlinuxarm/` (base tarball, MD5, signature and signing key).
+- Persistent pacman package cache: `out/pacman-cache/`. Successfully downloaded packages are reused on the next build.
+- Before resetting the working rootfs, the script unmounts its old chroot mounts. If a mount is still busy, it aborts and prints diagnostics instead of deleting a mounted tree.
+- Pacman is invoked with `--disable-sandbox` only inside the build chroot because the current host environment does not expose Landlock there. Package signature verification remains enabled.
+
 - `out/rootfs.img`: the single ext4 filesystem image.
 - `out/rootfs.img.sha256`: SHA-256 checksum.
 - `out/BUILD-MANIFEST.txt`: build details.
