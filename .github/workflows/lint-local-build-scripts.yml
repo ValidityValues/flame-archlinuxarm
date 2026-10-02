@@ -23,4 +23,4 @@ jobs:
           grep -q 'linux-firmware-qcom' scripts/build-rootfs.sh
           grep -q 'bluez-utils' scripts/build-rootfs.sh
           grep -q 'NetworkManager.service' scripts/build-rootfs.sh
-          grep -q 'systemd' docs/boot-layout.md
+          grep -q 'blkmap' docs/boot-layout.md
