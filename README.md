@@ -31,8 +31,9 @@ The script prompts for sudo when required, verifies the upstream Arch Linux ARM 
 
 - Persistent source download cache: `out/cache/archlinuxarm/` (base tarball, MD5, signature and signing key).
 - Persistent pacman package cache: `out/pacman-cache/`. Successfully downloaded packages are reused on the next build.
-- Before resetting the working rootfs, the script unmounts its old chroot mounts. If a mount is still busy, it aborts and prints diagnostics instead of deleting a mounted tree.
-- Pacman is invoked with `--disable-sandbox` only inside the build chroot because the current host environment does not expose Landlock there. Package signature verification remains enabled.
+- Before resetting the working rootfs, the script recursively unmounts its old chroot mounts; if necessary, it stops leftover processes whose root or working directory is inside this builder's chroot. It never deletes the working tree before mounts are detached.
+- Pacman uses a list of official Arch Linux ARM mirrors, one parallel download at a time, and `--disable-download-timeout`. The build chroot also passes `--disable-sandbox` because the host kernel does not expose Landlock there. Package signature verification remains enabled.
+- Plasma's audio and Qt multimedia providers are selected explicitly, so the package install should not stop for provider-selection prompts.
 
 - `out/rootfs.img`: the single ext4 filesystem image.
 - `out/rootfs.img.sha256`: SHA-256 checksum.
